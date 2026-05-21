@@ -1,0 +1,12 @@
+/doc/
+/Meta/
+
+# R artefacts
+*.Rproj.user
+*.Rhistory
+*.RData
+*.Ruserdata
+.Rproj.user/
+
+# OS
+.DS_Store

@@ -1,0 +1,34 @@
+Package: hicontrol
+Title: Control Chart Rules for Influenza HI Titre Data
+Version: 0.1.0
+Authors@R: c(
+    person("Sarah", "James", email = "slj38@cam.ac.uk",
+           role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-6969-1167")),
+    person("Yi", "Dong", email = "yd332@cantab.ac.uk",
+           role = "aut"))
+Description: Implements control chart rules adapted for interval-censored
+    influenza haemagglutination inhibition (HI) titre data. Provides
+    functions for detecting systematic shifts, trends, and other
+    out-of-control patterns in repeated HI measurements, based on
+    Westgard and Nelson control chart methodology. Also includes
+    utilities for converting HI titres to the log2 scale and
+    visualising rule violations on control charts.
+License: GPL-3
+Encoding: UTF-8
+URL: https://github.com/drserajames/hicontrol
+BugReports: https://github.com/drserajames/hicontrol/issues
+Depends:
+    R (>= 4.1.0)
+Imports:
+    grDevices,
+    graphics,
+    stats
+Suggests:
+    knitr,
+    Racmacs,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+RoxygenNote: 8.0.0

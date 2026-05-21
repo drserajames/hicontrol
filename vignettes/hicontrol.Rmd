@@ -1,0 +1,319 @@
+---
+title: "Quality control of HI titre data with hicontrol"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Quality control of HI titre data with hicontrol}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  fig.width  = 7,
+  fig.height = 4
+)
+```
+
+```{r setup}
+library(hicontrol)
+```
+
+## Introduction
+
+Haemagglutination inhibition (HI) assays measure the level of antibodies
+against an influenza strain by finding the highest serum dilution that
+still blocks haemagglutination. In large-scale surveillance programmes a
+**reference (control) serum** of known reactivity is included in every
+assay run. Because this serum should be stable over time, its titre should
+remain close to a fixed target value. Sustained departures from that target
+signal a laboratory process problem — such as reagent degradation, a change
+in antigen quality, or an error in serum dilution — rather than genuine
+biological change.
+
+`hicontrol` applies eight statistical control chart rules to repeated HI
+measurements of the same reference serum. Two properties of HI titres make
+standard control chart software awkward to use:
+
+- **Interval censoring.** Titres are reported on a doubling-dilution scale
+  (10, 20, 40, 80, 160, …), so each reading is known only to the nearest
+  log₂ unit. The package therefore works in log₂ units.
+- **Left censoring.** Readings below the assay detection limit are reported
+  as `"<10"`, `"<20"`, and so on. These are treated as half the detection
+  limit before log-transformation.
+
+---
+
+## Data preparation: `log_num()`
+
+Raw HI titres arrive as character strings. `log_num()` converts them to the
+log₂ scale relative to a base dilution of 10, so:
+
+| Titre  | log₂ value |
+|--------|-----------|
+| `"10"` | 0         |
+| `"20"` | 1         |
+| `"40"` | 2         |
+| `"80"` | 3         |
+| `"160"`| 4         |
+| `"320"`| 5         |
+
+Left-censored values are assigned half the detection limit before
+transformation, so `"<10"` (treated as 5) becomes log₂(5/10) = −1.
+
+```{r log-num}
+raw <- c("80", "160", "40", "80", "160", "<10", "40", "320")
+suppressWarnings(log_num(raw))
+```
+
+The warning from `as.numeric()` on the `"<10"` string is expected and
+harmless; use `suppressWarnings()` in production code.
+
+---
+
+## A complete QC workflow
+
+### Setting up
+
+We create two simulated 20-run time series for a reference serum. Both use
+`centre = 3` (corresponding to titre 80 on the 1:10 scale) and
+`threshold = 1` (one standard deviation unit on the log₂ scale).
+
+```{r data}
+centre    <- 3
+threshold <- 1
+n_length  <- c(1, 3, 8, 9, 25, 10, 4, 2)  # window lengths for the 8 rules
+
+# In-control: random scatter around centre, no violations expected
+dat_ok <- c(3, 4, 2, 3, 4, 3, 2, 4, 3, 3, 4, 2, 3, 4, 3, 2, 3, 4, 3, 4)
+
+# Out-of-control: abrupt upward step at run 11 (reagent or dilution error)
+dat_ooc <- c(3, 4, 2, 3, 4, 3, 2, 4, 3, 3, 7, 7, 6, 7, 7, 6, 7, 7, 6, 7)
+```
+
+### Applying the rules: `hi_rules()`
+
+`hi_rules()` runs all eight rules in a single call. It returns a list with
+two elements:
+
+- `[[1]]` — a list of eight raw results, one per rule. Rules that detect
+  individual point violations (rules 1, 2, 3, 8) return integer vectors of
+  flagged indices; rules that detect runs (rules 4–7) return matrices with
+  one column per flagged run (row 1 = start index, row 2 = run length).
+- `[[2]]` — a numeric vector of eight **false-positive rates**: the
+  proportion of observations that were flagged by each rule.
+
+```{r hi-rules-ok}
+res_ok <- hi_rules(dat_ok, centre, threshold)
+
+# False-positive rates — all zero for the in-control series
+res_ok[[2]]
+```
+
+```{r hi-rules-ooc}
+res_ooc <- hi_rules(dat_ooc, centre, threshold)
+
+# Several rules fire after the step change
+res_ooc[[2]]
+```
+
+The non-zero entries correspond to:
+
+- **Rule 1** (1 point ≥ 3 SD): the post-step values are 4 SD above centre.
+- **Rule 3** (8 consecutive points on one side): all ten post-step
+  observations lie above centre.
+- **Rule 4** (9 points ≥ 1 SD, either side): a relaxed version of rule 3.
+- **Rule 8** (single-step difference ≥ 3): the jump between run 10 and
+  run 11 is |3 − 7| = 4 log₂ units.
+
+To inspect which runs were flagged by a specific rule:
+
+```{r inspect-results}
+# Rule 8 flagged indices (steps of >= 3 log2 units)
+res_ooc[[1]][[8]]
+
+# Rule 7 (trend) result matrix: start index, run length, direction (+1 up / -1 down)
+# (returns NULL when no trend is detected)
+res_ooc[[1]][[7]]
+```
+
+### Visualising with `plot_nelson()`
+
+`plot_nelson()` draws the time series with horizontal reference lines at the
+centre and at ±1, ±2, and ±3 SD, then overlays coloured points and line
+segments for each rule violation. Each rule has a fixed colour:
+
+| Colour  | Rule |
+|---------|------|
+| Red     | 1 — point ≥ 3 SD |
+| Orange  | 2 — 2 of 3 points ≥ 2 SD |
+| Yellow  | 3 — 8 points on one side |
+| Tan     | 4 — 9 points ≥ 1 SD (relaxed) |
+| Blue    | 5 — 25 identical values |
+| Magenta | 6 — 10 alternating points |
+| Pink    | 7 — monotone trend |
+| Purple  | 8 — large single step |
+
+```{r plot-nelson-ok, fig.cap = "In-control series: no rule violations."}
+plot_nelson(dat_ok, res_ok[[1]], centre, threshold, n_length)
+```
+
+```{r plot-nelson-ooc, fig.cap = "Out-of-control series: abrupt step change triggers multiple rules."}
+plot_nelson(dat_ooc, res_ooc[[1]], centre, threshold, n_length)
+```
+
+The large purple segment marks the rule-8 step; the red points in the
+post-step region mark rule-1 violations; the tan shading connects the
+rule-4 run.
+
+---
+
+## The eight control rules
+
+```{r rules-table, echo = FALSE}
+rules <- data.frame(
+  Rule = 1:8,
+  Function = c(
+    "rule_xyz(x=1, y=1, z=3)",
+    "rule_xyz(x=2, y=3, z=2)",
+    "rule_xyz(x=8, y=8, z=0)",
+    "rule_noCrelax(n=9)",
+    "rule_nodiff(n=25)",
+    "rule_alt(n=10)",
+    "rule_trend(n=4)",
+    "rule_diff(d=3)"
+  ),
+  Description = c(
+    "1 point ≥ 3 SD from centre",
+    "2 of 3 consecutive points ≥ 2 SD from centre",
+    "8 consecutive points on the same side of centre",
+    "9 consecutive points ≥ 1 SD from centre (either side)",
+    "25 consecutive identical values",
+    "10 consecutive alternating up-down points",
+    "4 consecutive points in a monotone trend",
+    "Single-step difference ≥ 3 log₂ units"
+  ),
+  Signals = c(
+    "Extreme outlier; transcription or pipetting error",
+    "Incipient shift or persistent mild outlier",
+    "Sustained systematic bias (antigen or reagent issue)",
+    "Systematic bias including zone-boundary values",
+    "Frozen / stuck assay; discretisation artefact",
+    "Over-correction between runs",
+    "Progressive drift (reagent degradation, storage issue)",
+    "Abrupt process change between consecutive runs"
+  )
+)
+knitr::kable(rules)
+```
+
+---
+
+## Visualisation variants
+
+### `plot_hi()`: symmetric y-axis
+
+`plot_hi()` produces the same chart as `plot_nelson()` but with a
+symmetric y-axis centred on `centre`. This makes it immediately obvious
+whether violations are above or below the centre line, and prevents a
+crowded y-axis when most points cluster near the centre. Additional
+arguments are passed through to `plot()`.
+
+```{r plot-hi, fig.cap = "Symmetric-axis chart: the magnitude of the step change is easier to judge."}
+plot_hi(dat_ooc, res_ooc[[1]], centre, threshold, n_length,
+        main = "Reference serum — step-change example",
+        ylab = expression(log[2] ~ titre))
+```
+
+### `plot_hi2()`: compact panel format
+
+`plot_hi2()` draws a minimal chart designed for assembling many
+antigen/serum pairs into a single multi-panel figure. Point and line sizes
+are scaled by `ttl_len` (the total number of time points across all panels)
+so that every panel appears visually consistent regardless of how many
+observations it contains. When any rule fires, a pink background is drawn
+as an at-a-glance alert.
+
+```{r plot-hi2, fig.width = 4, fig.height = 3, fig.cap = "Compact panel: pink background flags at least one rule violation."}
+res2_ooc <- hi_rules2(dat_ooc, centre, threshold)
+plot_hi2(dat_ooc, res2_ooc[[1]], centre, threshold,
+         n_length, ttl_len = 30)
+```
+
+---
+
+## Counts instead of rates: `hi_rules2()`
+
+`hi_rules2()` is identical to `hi_rules()` except that element `[[2]]`
+contains raw counts of flagged observations rather than proportions. This
+is more convenient when aggregating results across many antigen/serum
+combinations, for example to rank which pairs trigger the most violations
+across a surveillance season.
+
+```{r hi-rules2}
+res2_ooc <- hi_rules2(dat_ooc, centre, threshold)
+
+# Number of observations flagged per rule
+res2_ooc[[2]]
+
+# Verify: counts / n == proportions (for rules that return vectors)
+res2_ooc[[2]][c(1, 8)] / length(dat_ooc)
+res_ooc[[2]][c(1, 8)]
+```
+
+The rule results list `[[1]]` is identical between `hi_rules()` and
+`hi_rules2()`.
+
+---
+
+## Individual rule functions
+
+All eight underlying rule functions are exported, so you can apply them
+individually, combine them in a different way, or use them in custom
+analysis pipelines.
+
+```{r individual-rules}
+# A 3-SD single-point outlier
+dat_spike <- c(3, 4, 3, 4, 6.5, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4)
+rule_xyz(dat_spike, centre, threshold, x = 1, y = 1, z = 3)  # index 5
+
+# A monotone trend
+dat_trend <- c(3, 3, 4, 5, 6, 7, 4, 3, 4, 3)
+result <- rule_trend(dat_trend, n = 4)
+result  # 3-row matrix: start, length, direction (+1 up / -1 down)
+
+# Large single-step differences
+rule_diff(dat_ooc, d = 3)  # index 10: the step at run 11
+```
+
+Every function returns `NULL` when no violations are detected, making
+them safe to use in `if (!is.null(...))` guards.
+
+---
+
+## Reference panel charts: `ref_panel_plot()`
+
+For large surveillance datasets stored as Acmacs map objects (from the
+**Racmacs** package), `ref_panel_plot()` automates the full pipeline. It
+iterates over every antigen/serum pair that has at least `min_n` repeat
+measurements, applies `hi_rules2()`, and writes a multi-panel PDF of
+compact `plot_hi2()` charts — one chart per qualifying pair.
+
+```{r ref-panel, eval = FALSE}
+library(Racmacs)
+map <- read.acmap("my_map.ace")
+
+ref_panel_plot(
+  map,
+  name   = "2024H3",
+  min_n  = 5,
+  file   = "qc_reference_panel_2024H3.pdf"
+)
+```
+
+Each panel shows the log₂ titre series for one antigen/serum pair, with a
+pink background if any rule fires. Coloured text in the bottom-right corner
+of each panel lists the count for each rule; a legend in the top-right
+gives the estimated standard deviation. Panels are sized so that one PDF
+page fits the full matrix of qualifying pairs.
