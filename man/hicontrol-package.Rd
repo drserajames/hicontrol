@@ -9,6 +9,14 @@
 Implements control chart rules adapted for interval-censored influenza
 haemagglutination inhibition (HI) titre data.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/drserajames/hicontrol}
+  \item Report bugs at \url{https://github.com/drserajames/hicontrol/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Sarah James \email{slj38@cam.ac.uk} (\href{https://orcid.org/0000-0002-6969-1167}{ORCID})
 
